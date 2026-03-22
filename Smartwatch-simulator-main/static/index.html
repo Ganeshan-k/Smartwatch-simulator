@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Smartwatch Simulator</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="page">
+    <h1>Smartwatch Simulator</h1>
+
+    <div class="watch-and-controls">
+      <div class="watch">
+        <div class="watch-face">
+          <div class="watch-bezel">
+            <div class="watch-display">
+              <div class="big-metrics">
+                <div class="metric">
+                  <div class="label">BPM</div>
+                  <div id="bpm" class="value">--</div>
+                </div>
+                <div class="metric">
+                  <div class="label">Steps</div>
+                  <div id="steps" class="value">--</div>
+                </div>
+              </div>
+
+              <div class="small-metrics">
+                <div class="metric small">
+                  <div class="label">Distance</div>
+                  <div id="distance" class="value small">-- km</div>
+                </div>
+                <div class="metric small">
+                  <div class="label">Calories</div>
+                  <div id="cal" class="value small">-- kcal</div>
+                </div>
+              </div>
+
+              <div class="status" id="status">loading…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <form id="settingsForm">
+          <h3>Simulation Settings</h3>
+
+          <label>Steps per tick
+            <div class="two">
+              <input type="number" id="steps_min" step="1" />
+              <input type="number" id="steps_max" step="1" />
+            </div>
+          </label>
+
+          <label>BPM range
+            <div class="two">
+              <input type="number" id="bpm_min" step="1" />
+              <input type="number" id="bpm_max" step="1" />
+            </div>
+          </label>
+
+          <label>Meters per step
+            <input type="number" id="meters_per_step" step="0.01" />
+          </label>
+
+          <label>Calories per step
+            <input type="number" id="calories_per_step" step="0.01" />
+          </label>
+
+          <label>Tick interval (s)
+            <input type="number" id="tick_interval" step="0.1" />
+          </label>
+
+          <div class="btn-row">
+            <button type="button" id="applyBtn">Apply</button>
+            <button type="button" id="resetBtn">Reset</button>
+          </div>
+        </form>
+
+        <div class="control-buttons">
+          <button id="startBtn">Start</button>
+          <button id="stopBtn">Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      API endpoints:
+      <code>/api/stream</code> (SSE) • <code>/api/settings</code> (POST) • <code>/api/control</code> (POST) • <code>/api/history</code> (POST) • <code>/api/history?n=1</code> (POST)
+    </footer>
+  </div>
+
+<script>
+  // connect to SSE stream
+  const evtSource = new EventSource("/api/stream");
+  const bpmEl = document.getElementById("bpm");
+  const stepsEl = document.getElementById("steps");
+  const distanceEl = document.getElementById("distance");
+  const calEl = document.getElementById("cal");
+  const statusEl = document.getElementById("status");
+
+  evtSource.onopen = () => statusEl.textContent = "connected";
+  evtSource.onerror = () => statusEl.textContent = "disconnected";
+
+  evtSource.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    bpmEl.textContent = d.bpm;
+    stepsEl.textContent = d.steps.toLocaleString();
+    distanceEl.textContent = (d.distance_km).toFixed(3) + " km";
+    calEl.textContent = d.calories.toFixed(2) + " kcal";
+    statusEl.textContent = (d.running ? "running" : "stopped") + " • updated " + new Date(d.timestamp*1000).toLocaleTimeString();
+  };
+
+  // load initial settings from API
+  async function loadState(){
+    const r = await fetch("/api/state");
+    const j = await r.json();
+    const s = j.settings;
+    document.getElementById("steps_min").value = s.steps_per_tick_min;
+    document.getElementById("steps_max").value = s.steps_per_tick_max;
+    document.getElementById("bpm_min").value = s.bpm_min;
+    document.getElementById("bpm_max").value = s.bpm_max;
+    document.getElementById("meters_per_step").value = s.meters_per_step;
+    document.getElementById("calories_per_step").value = s.calories_per_step;
+    document.getElementById("tick_interval").value = s.tick_interval;
+  }
+
+  loadState();
+
+  document.getElementById("applyBtn").addEventListener("click", async () => {
+    const payload = {
+      steps_per_tick_min: parseInt(document.getElementById("steps_min").value || 0),
+      steps_per_tick_max: parseInt(document.getElementById("steps_max").value || 1),
+      bpm_min: parseInt(document.getElementById("bpm_min").value || 55),
+      bpm_max: parseInt(document.getElementById("bpm_max").value || 120),
+      meters_per_step: parseFloat(document.getElementById("meters_per_step").value || 0.78),
+      calories_per_step: parseFloat(document.getElementById("calories_per_step").value || 0.04),
+      tick_interval: parseFloat(document.getElementById("tick_interval").value || 1.0)
+    };
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    alert("Settings applied");
+  });
+
+  document.getElementById("resetBtn").addEventListener("click", async () => {
+    const ok = confirm("Reset simulated totals (steps/distance/calories)?");
+    if(!ok) return;
+    await fetch("/api/control", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({cmd: "reset"})
+    });
+  });
+
+  document.getElementById("startBtn").addEventListener("click", async () => {
+    await fetch("/api/control", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({cmd: "start"})
+    });
+  });
+
+  document.getElementById("stopBtn").addEventListener("click", async () => {
+    await fetch("/api/control", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({cmd: "stop"})
+    });
+  });
+</script>
+</body>
+</html>
